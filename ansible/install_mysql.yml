@@ -1,0 +1,20 @@
+---
+- name: Install MySQL on EC2
+  hosts: all
+  become: yes
+  tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+
+    - name: Install MySQL Server
+      apt:
+        name: mysql-server
+        state: present
+
+    - name: Ensure MySQL is started
+      service:
+        name: mysql
+        state: started
+        enabled: yes
+

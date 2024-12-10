@@ -1,0 +1,112 @@
+pipeline {
+    agent any
+
+    environment {
+        TF_VAR_aws_access_key = credentials('aws-access-key')  // AWS Access Key (from Jenkins credentials)
+        TF_VAR_aws_secret_key = credentials('aws-secret-key')  // AWS Secret Key (from Jenkins credentials)
+        TF_STATE_BUCKET = "ramratan-bucket-2510"
+        TF_LOCK_TABLE = "terraform-locks"
+        MYSQL_PUBLIC_IP = ""  // Will be populated with the EC2 instance's public IP later
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm  // Checkout code from GitHub repository
+            }
+        }
+
+        stage('Terraform Init') {
+            steps {
+                script {
+                    // Initialize Terraform with S3 backend and DynamoDB for state locking
+                    sh 'terraform init -backend-config="bucket=${TF_STATE_BUCKET}" -backend-config="key=terraform/state/terraform.tfstate" -backend-config="region=us-east-1" -backend-config="dynamodb_table=${TF_LOCK_TABLE}"'
+                }
+            }
+        }
+
+        stage('Terraform Plan') {
+            steps {
+                script {
+                    // Run terraform plan and output the plan to a file
+                    def planStatus = sh(script: 'terraform plan -out=tfplan', returnStatus: true)
+                    
+                    if (planStatus == 0) {
+                        echo "Terraform plan successful."
+                    } else {
+                        currentBuild.result = 'FAILURE'
+                        error "Terraform Plan failed. Aborting pipeline."
+                    }
+                }
+            }
+        }
+
+        stage('Terraform Apply') {
+            steps {
+                script {
+                    // Apply the terraform plan and create infrastructure
+                    sh 'terraform apply -auto-approve tfplan'
+                    
+                    // Capture the public IP of the EC2 instance
+                    MYSQL_PUBLIC_IP = sh(script: 'terraform output -raw mysql_instance_public_ip', returnStdout: true).trim()
+                    echo "MySQL server will be accessible at: ${MYSQL_PUBLIC_IP}"
+                }
+            }
+        }
+
+        stage('Install MySQL via Ansible') {
+            steps {
+                script {
+                    // Run Ansible playbook to install MySQL on the EC2 instance
+                    sh """
+                    ansible-playbook -i ${MYSQL_PUBLIC_IP}, --private-key=path/to/your/jenkins/ssh_key --user=ubuntu install_mysql.yml
+                    """
+                }
+            }
+        }
+
+        stage('Configure Apache2') {
+            steps {
+                script {
+                    // Use Ansible to install and configure Apache2 to host MySQL on the web
+                    sh """
+                    ansible-playbook -i ${MYSQL_PUBLIC_IP}, --private-key=path/to/your/jenkins/ssh_key --user=ubuntu install_apache_mysql_web.yml
+                    """
+                }
+            }
+        }
+
+        stage('Output MySQL Access URL') {
+            steps {
+                script {
+                    // Output the URL to access MySQL on the web server
+                    echo "MySQL is hosted on the web at: http://${MYSQL_PUBLIC_IP}"
+                }
+            }
+        }
+
+        stage('Clean Up') {
+            steps {
+                script {
+                    // Cleanup terraform state files after apply
+                    sh 'rm -f tfplan'
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            echo 'Pipeline execution completed.'
+        }
+
+        success {
+            echo 'MySQL server hosted successfully on Apache2.'
+        }
+
+        failure {
+            echo 'Pipeline failed, please check the logs.'
+        }
+    }
+}
+

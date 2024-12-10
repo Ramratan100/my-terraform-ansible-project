@@ -1,0 +1,27 @@
+---
+- name: Install Apache2 and configure MySQL on the web server
+  hosts: all
+  become: yes
+  tasks:
+    - name: Install Apache2
+      apt:
+        name: apache2
+        state: present
+
+    - name: Ensure Apache2 is started
+      service:
+        name: apache2
+        state: started
+        enabled: yes
+
+    - name: Create a basic HTML page for MySQL info
+      copy:
+        content: |
+          <html>
+            <body>
+              <h1>MySQL Server Status</h1>
+              <p>MySQL server is running successfully!</p>
+            </body>
+          </html>
+        dest: /var/www/html/index.html
+
